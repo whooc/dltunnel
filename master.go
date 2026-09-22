@@ -108,6 +108,8 @@ func (m *Master) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, "ok v"+version+"\n")
 	case p == "/agent.sh":
 		m.handleAgentScript(w, r)
+	case p == "/agent-uninstall.sh":
+		m.handleAgentUninstall(w, r)
 	case strings.HasPrefix(p, "/bin/"):
 		m.handleBinary(w, r)
 	case p == "/__ping":

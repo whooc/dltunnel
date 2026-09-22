@@ -8,10 +8,13 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 )
 
-const version = "1.1.0"
+// version 由构建时注入: -ldflags "-X main.version=v1.2.3"
+// 发布流水线会用 git tag 自动覆盖, 所以二进制版本号永远等于 release tag.
+var version = "1.1.1"
 
 func main() {
 	var (
@@ -21,8 +24,14 @@ func main() {
 		binDir  = flag.String("bindir", "", "各架构二进制存放目录 (仅 master, 供从节点一键安装下载)")
 		name    = flag.String("name", "", "节点名称 (仅 agent 使用)")
 		secret  = flag.String("secret", "", "节点密钥 (仅 agent 使用, 必填)")
+		showVer = flag.Bool("version", false, "打印版本号后退出")
 	)
 	flag.Parse()
+
+	if *showVer {
+		fmt.Println("dltunnel " + version)
+		return
+	}
 
 	log.SetFlags(log.LstdFlags)
 

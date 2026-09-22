@@ -100,6 +100,32 @@ scp dltunnel root@<IP>:/opt/dltunnel/dltunnel
 ./dltunnel -mode agent  -listen :20809 -name "HK-01" -secret <密钥>
 ```
 
+### 卸载
+
+**主服务器**：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/whooc/dltunnel/main/uninstall.sh | bash
+```
+
+默认只移除服务和程序，**保留 `data/`（管理密码、节点配置、下载记录）**。
+彻底清干净加 `--purge`：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/whooc/dltunnel/main/uninstall.sh | bash -s -- --purge
+```
+
+安装时用过 `--dir` 的，卸载也要带上同一个 `--dir`。
+
+**从节点**：命令由主服务器提供，管理面板「设置 → 一键卸载」里可直接复制：
+
+```bash
+curl -fsSL http://<主服务器>:20808/agent-uninstall.sh | bash
+```
+
+两个卸载脚本都会先停服务、禁用开机自启、删除 systemd unit，
+再结束残留进程并清理安装目录，最后打印结果。主服务器卸载后端口 20808 会释放。
+
 ## 用域名访问（可选）
 
 `dltunnel` 自身只监听高位端口（默认 20808），用 IP 直连最省事。要挂域名就在前面加一层反向代理。
@@ -137,6 +163,7 @@ HTTPS 直接在反代层做（Let's Encrypt / acme.sh 通配符证书均可）�
 | GET | `/health` | 纯文本健康检查 |
 | GET | `/__ping` | 延迟探测（无鉴权，节点互相探测用） |
 | GET | `/agent.sh?secret=&name=&port=` | 动态生成从节点安装脚本 |
+| GET | `/agent-uninstall.sh` | 从节点一键卸载脚本 |
 | GET | `/bin/{dltunnel-linux-amd64\|arm64}` | 分发二进制（白名单，防路径穿越） |
 | POST | `/api/targets` | `{"url":"..."}` → 各节点的签名下载直链 |
 | GET | `/dl?t=<令牌>` | 流式中转下载 |

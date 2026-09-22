@@ -132,6 +132,65 @@ func (m *Master) handleAgentScript(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, body)
 }
 
+// agentUninstallScript 从节点一键卸载脚本.
+// 从节点安装位置固定, 不含任何密钥, 所以静态生成即可, 无需模板替换.
+const agentUninstallScript = `#!/usr/bin/env bash
+# dltunnel 从节点一键卸载 (由主服务器提供)
+set -e
+
+DIR="/opt/dltunnel-agent"
+SVC="dltunnel-agent"
+
+if [ "$(id -u)" != "0" ]; then
+  echo "请用 root 运行 (或 sudo bash)"; exit 1
+fi
+
+echo "即将卸载 dltunnel 从节点"
+echo "  安装目录 : $DIR"
+echo "  服务名   : $SVC"
+echo ""
+
+if [ -f "/etc/systemd/system/$SVC.service" ]; then
+  echo "==> 停止并移除 systemd 服务"
+  systemctl stop "$SVC" 2>/dev/null || true
+  systemctl disable "$SVC" >/dev/null 2>&1 || true
+  rm -f "/etc/systemd/system/$SVC.service"
+  systemctl daemon-reload
+  systemctl reset-failed "$SVC" 2>/dev/null || true
+else
+  echo "==> 未发现 $SVC.service (可能不是用 systemd 安装的)"
+fi
+
+if pgrep -f "$DIR/dltunnel" >/dev/null 2>&1; then
+  echo "==> 结束残留进程"
+  pkill -f "$DIR/dltunnel" 2>/dev/null || true
+  sleep 1
+  pkill -9 -f "$DIR/dltunnel" 2>/dev/null || true
+fi
+
+# 安全护栏: 目录名不符预期时不动它
+if [ "$DIR" = "/opt/dltunnel-agent" ] && [ -d "$DIR" ]; then
+  echo "==> 删除安装目录"
+  rm -rf "$DIR"
+else
+  echo "==> 安装目录不存在, 跳过: $DIR"
+fi
+
+echo ""
+echo "=========================================="
+echo " 从节点已卸载"
+echo "=========================================="
+echo " 请回到主服务器管理面板, 在「节点」页删除该节点的记录。"
+echo "=========================================="
+`
+
+// handleAgentUninstall 输出从节点卸载脚本.
+func (m *Master) handleAgentUninstall(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	io.WriteString(w, agentUninstallScript)
+}
+
 // handleBinary 对外提供各架构的二进制, 供从节点安装脚本下载.
 func (m *Master) handleBinary(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimPrefix(r.URL.Path, "/bin/")

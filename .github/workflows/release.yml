@@ -25,21 +25,43 @@ jobs:
         with:
           go-version: '1.23'
 
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build binaries
+        env:
+          V: ${{ steps.ver.outputs.tag }}
         run: |
           mkdir -p dist
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o dist/dltunnel-linux-amd64 .
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o dist/dltunnel-linux-arm64 .
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath \
+              -ldflags "-s -w -X main.version=$V" \
+              -o "dist/dltunnel-linux-$arch" .
+          done
           chmod +x dist/*
           ls -lh dist/
+
+      - name: Verify injected version
+        run: |
+          OUT="$(./dist/dltunnel-linux-amd64 -version)"
+          echo "binary reports: $OUT"
+          echo "$OUT" | grep -q "${{ steps.ver.outputs.tag }}" \
+            || { echo "版本号注入失败: 期望 ${{ steps.ver.outputs.tag }}"; exit 1; }
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          tag_name: ${{ steps.ver.outputs.tag }}
           files: |
             dist/dltunnel-linux-amd64
             dist/dltunnel-linux-arm64
             install.sh
+            uninstall.sh
           generate_release_notes: true
           draft: false

@@ -396,6 +396,24 @@
         脚本从本机下载二进制，不依赖 GitHub，也不需要从服务器能访问外网。
       </div>
     </div>
+
+    <div class="card">
+      <h3>一键卸载</h3>
+      <p class="desc">在对应服务器上执行即可移除 dltunnel，不影响机器上的其它服务。</p>
+
+      <div class="field"><label>从节点卸载（在从服务器上执行）</label></div>
+      <pre class="cmd" id="uninst-agent"></pre>
+      <button class="btn-s btn-sm copybtn" id="copyUninstAgent">复制命令</button>
+
+      <div class="field" style="margin-top:16px"><label>主服务器卸载（在本机执行）</label></div>
+      <pre class="cmd" id="uninst-master"></pre>
+      <button class="btn-s btn-sm copybtn" id="copyUninstMaster">复制命令</button>
+
+      <div class="hintbox">
+        默认<b>只删程序，保留配置与下载记录</b>；要连数据一起清除，在命令末尾追加
+        <code>--purge</code>。主服务器卸载后端口 20808 会释放。
+      </div>
+    </div>
   </section>
 </div>
 
@@ -905,6 +923,23 @@ $('#copyCmd').onclick = () => {
     .then(() => toast('命令已复制', 'ok'))
     .catch(() => toast('复制失败，请手动选中复制', 'err'));
 };
+
+/* ---------- 一键卸载命令 ---------- */
+function bindCopy(btnId, preId, label) {
+  const btn = $('#' + btnId);
+  if (!btn) return;
+  btn.onclick = () => {
+    navigator.clipboard.writeText($('#' + preId).textContent)
+      .then(() => toast(label + '已复制', 'ok'))
+      .catch(() => toast('复制失败，请手动选中复制', 'err'));
+  };
+}
+$('#uninst-agent').textContent =
+  'curl -fsSL ' + location.origin + '/agent-uninstall.sh | bash';
+$('#uninst-master').textContent =
+  'curl -fsSL https://raw.githubusercontent.com/whooc/dltunnel/main/uninstall.sh | bash';
+bindCopy('copyUninstAgent', 'uninst-agent', '从节点卸载命令');
+bindCopy('copyUninstMaster', 'uninst-master', '主服务器卸载命令');
 
 $('#gen-secret').value = randKey();
 quickDays(-1);
