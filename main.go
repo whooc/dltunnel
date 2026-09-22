@@ -12,9 +12,10 @@ import (
 	"log"
 )
 
-// version 由构建时注入: -ldflags "-X main.version=v1.2.3"
-// 发布流水线会用 git tag 自动覆盖, 所以二进制版本号永远等于 release tag.
-var version = "1.1.1"
+// version 是不带 v 前缀的纯版本号, 由构建时注入: -ldflags "-X main.version=1.2.3"
+// 发布流水线会用 git tag 自动覆盖 (去掉 v 前缀), 所以二进制版本号永远等于 release tag.
+// 展示时统一拼上 "v", 例如 /health 返回 "ok v1.2.0"。
+var version = "1.2.0"
 
 func main() {
 	var (
@@ -29,7 +30,7 @@ func main() {
 	flag.Parse()
 
 	if *showVer {
-		fmt.Println("dltunnel " + version)
+		fmt.Println("dltunnel v" + version)
 		return
 	}
 

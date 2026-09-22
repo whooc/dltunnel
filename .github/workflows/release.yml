@@ -39,9 +39,11 @@ jobs:
           V: ${{ steps.ver.outputs.tag }}
         run: |
           mkdir -p dist
+          # 注入纯版本号 (去掉 tag 的 v 前缀), 展示时程序自己拼 v
+          BARE="${V#v}"
           for arch in amd64 arm64; do
             CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath \
-              -ldflags "-s -w -X main.version=$V" \
+              -ldflags "-s -w -X main.version=$BARE" \
               -o "dist/dltunnel-linux-$arch" .
           done
           chmod +x dist/*
@@ -52,7 +54,10 @@ jobs:
           OUT="$(./dist/dltunnel-linux-amd64 -version)"
           echo "binary reports: $OUT"
           echo "$OUT" | grep -q "${{ steps.ver.outputs.tag }}" \
-            || { echo "版本号注入失败: 期望 ${{ steps.ver.outputs.tag }}"; exit 1; }
+            || { echo "版本号注入失败: 期望包含 ${{ steps.ver.outputs.tag }}"; exit 1; }
+          case "$OUT" in
+            *vv*) echo "版本号重复了 v 前缀: $OUT"; exit 1 ;;
+          esac
 
       - name: Publish release
         uses: softprops/action-gh-release@v2

@@ -11,6 +11,7 @@ import hashlib
 import http.server
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -161,6 +162,15 @@ def main():
         check("关闭记录后不再新增 (历史保留)", after == before and before >= 1,
               "before=%d after=%d" % (before, after))
         call(MASTER + "/api/admin/config", "PUT", {"record_retain_days": 30}, cookie=cookie)
+
+        print("\n== 版本号展示 ==")
+        st, _, b = call(MASTER + "/health")
+        txt = b.decode("utf-8", "replace").strip()
+        check("/health 格式为 'ok vX.Y.Z'", st == 200 and re.match(r"^ok v\d+\.\d+", txt), txt)
+        check("版本号没有重复 v 前缀", "vv" not in txt, txt)
+        st, _, b = call(AGENT + "/")
+        atxt = b.decode("utf-8", "replace").strip()
+        check("agent 横幅没有重复 v 前缀", "vv" not in atxt, atxt)
 
         print("\n== 节点健康检查 ==")
         alog = open(os.path.join(ROOT, "smoke3_agent.log"), "w+", encoding="utf-8")
