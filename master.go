@@ -554,7 +554,17 @@ func (m *Master) apiNodeItem(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodPut:
-		var in Node
+		// 用指针接收可空字段: 只更新传过来的字段, 没传的保持原值。
+		// 之前 enabled 是普通 bool 且无条件赋值, 导致"只想改地区"的部分更新
+		// 会把节点静默停用 (enabled 缺省 false)。region / remark 同理。
+		var in struct {
+			Name    string  `json:"name"`
+			BaseURL string  `json:"base_url"`
+			Secret  string  `json:"secret"`
+			Region  *string `json:"region"`
+			Remark  *string `json:"remark"`
+			Enabled *bool   `json:"enabled"`
+		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&in); err != nil {
 			fail(w, http.StatusBadRequest, "请求体解析失败")
 			return
@@ -575,9 +585,15 @@ func (m *Master) apiNodeItem(w http.ResponseWriter, r *http.Request) {
 				if in.Secret != "" {
 					c.Nodes[i].Secret = in.Secret
 				}
-				c.Nodes[i].Region = strings.ToUpper(strings.TrimSpace(in.Region))
-				c.Nodes[i].Remark = strings.TrimSpace(in.Remark)
-				c.Nodes[i].Enabled = in.Enabled
+				if in.Region != nil {
+					c.Nodes[i].Region = strings.ToUpper(strings.TrimSpace(*in.Region))
+				}
+				if in.Remark != nil {
+					c.Nodes[i].Remark = strings.TrimSpace(*in.Remark)
+				}
+				if in.Enabled != nil {
+					c.Nodes[i].Enabled = *in.Enabled
+				}
 			}
 			return nil
 		})

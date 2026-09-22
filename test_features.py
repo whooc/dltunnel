@@ -270,6 +270,27 @@ def main():
         check("停用后用户页面只剩主服务器", len(json.loads(b)["nodes"]) == 1,
               len(json.loads(b)["nodes"]))
 
+        print("\n== 节点部分更新不会误伤其它字段 ==")
+        # 曾经 PUT 用普通 bool 无条件覆盖 enabled, "只想改个地区"的部分更新
+        # 会把节点静默停用 —— 对面板之外的调用方(curl/脚本)是个很隐蔽的坑。
+        call(MASTER + "/api/admin/nodes/" + alive_id, "PUT",
+             {"region": "HK"}, cookie=cookie)
+        st, _, b = call(MASTER + "/api/admin/nodes", cookie=cookie)
+        node = [n for n in json.loads(b)["nodes"] if n["id"] == alive_id][0]
+        check("只传 region 时 enabled 保持不变", node["enabled"] is False, node["enabled"])
+        check("只传 region 时 region 已更新", node["region"] == "HK", node["region"])
+        check("只传 region 时 name 不变", node["name"] == "可达节点", node["name"])
+        check("只传 region 时 base_url 不变", node["base_url"] == AGENT, node["base_url"])
+
+        call(MASTER + "/api/admin/nodes/" + alive_id, "PUT",
+             {"enabled": True}, cookie=cookie)
+        st, _, b = call(MASTER + "/api/admin/nodes", cookie=cookie)
+        node = [n for n in json.loads(b)["nodes"] if n["id"] == alive_id][0]
+        check("只传 enabled 时节点被启用", node["enabled"] is True, node["enabled"])
+        check("只传 enabled 时 region 不变", node["region"] == "HK", node["region"])
+        check("只传 enabled 时 name 不变", node["name"] == "可达节点", node["name"])
+        check("只传 enabled 时 base_url 不变", node["base_url"] == AGENT, node["base_url"])
+
         print("\n== 一键安装脚本 /agent.sh ==")
         st, h, b = call(MASTER + "/agent.sh?secret=abc123&name=HK-01&port=20809")
         txt = b.decode("utf-8", "replace")

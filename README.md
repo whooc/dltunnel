@@ -252,7 +252,7 @@ HTTPS 直接在反代层做（Let's Encrypt / acme.sh 通配符证书均可）�
 | GET | `/dl?t=<令牌>` | 流式中转下载 |
 | POST | `/api/login` | 面板登录 |
 | GET/POST | `/api/admin/nodes` | 节点列表（含健康状态）/ 新增 |
-| PUT/DELETE | `/api/admin/nodes/{id}` | 修改 / 删除 |
+| PUT/DELETE | `/api/admin/nodes/{id}` | 修改 / 删除（PUT 是**部分更新**：只改传过来的字段） |
 | POST | `/api/admin/nodes/{id}/test` | 主服务器侧测节点延迟 |
 | POST | `/api/admin/health/check` | 立即重测全部节点 |
 | GET/DELETE | `/api/admin/records` | 下载记录查询（`from`/`to`/`q`/`limit`/`offset`）/ 清空 |
@@ -272,7 +272,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o dist/dltunnel-linux-arm64 .
 
 ```bash
 python test_e2e.py        # 45 项: 基础回归
-python test_features.py   # 146 项: 主题 / 记录 / 健康 / 一键安装卸载 / 配置 / 访问验证
+python test_features.py   # 154 项: 主题 / 记录 / 健康 / 一键安装卸载 / 配置 / 访问验证
 ```
 
 覆盖：接口可用性、SSRF 防护、鉴权、令牌伪造、**中转字节 md5 完整性**、Range 断点续传、
