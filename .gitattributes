@@ -1,0 +1,11 @@
+# 统一换行符: 源码与脚本一律 LF, 避免在 Linux 上执行出错
+* text=auto eol=lf
+
+*.sh   text eol=lf
+*.yml  text eol=lf
+*.go   text eol=lf
+*.md   text eol=lf
+
+*.png  binary
+*.jpg  binary
+*.ico  binary

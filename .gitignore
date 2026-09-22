@@ -1,0 +1,14 @@
+# 编译产物
+dist/
+*.exe
+
+# 运行期数据 (配置、下载记录)
+data/
+smoke*/
+*.log
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
