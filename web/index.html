@@ -65,6 +65,30 @@
 
   main{position:relative;z-index:1;max-width:900px;margin:0 auto;padding:64px 20px 80px}
   header{text-align:center;margin-bottom:38px}
+
+  /* ---- 访问验证页 (设置里开启"需要登录后才能使用"时显示) ---- */
+  #boot{position:relative;z-index:1;text-align:center;color:var(--dim2);font-size:13px;
+    margin-top:22vh}
+  #gate{position:relative;z-index:1;max-width:400px;margin:14vh auto 0;padding:0 20px}
+  #gate .box{background:var(--panel);border:1px solid var(--line);border-radius:18px;
+    padding:34px 28px;box-shadow:0 22px 60px -28px var(--shadow);text-align:center}
+  #gate .logo{width:52px;height:52px;margin:0 auto 16px;border-radius:15px;
+    background:linear-gradient(135deg,var(--ind),var(--cy));display:flex;align-items:center;
+    justify-content:center;box-shadow:0 12px 30px -12px rgba(99,102,241,.75)}
+  #gate .logo svg{width:26px;height:26px}
+  #gate h2{font-size:19px;font-weight:650;margin-bottom:6px}
+  #gate .sub{color:var(--dim);font-size:13px;margin-bottom:22px}
+  #gate .ginput{display:flex;gap:8px}
+  #gate input{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:11px;
+    padding:12px 14px;color:var(--txt);font-size:14px;outline:0;font-family:inherit;min-width:0;
+    transition:border-color .2s,box-shadow .2s}
+  #gate input:focus{border-color:rgba(99,102,241,.65);box-shadow:0 0 0 4px rgba(99,102,241,.11)}
+  #gate button{background:linear-gradient(135deg,var(--ind),#4f46e5);color:#fff;border:0;
+    border-radius:11px;padding:12px 20px;font-size:14px;font-weight:600;cursor:pointer;
+    font-family:inherit;transition:filter .18s}
+  #gate button:hover{filter:brightness(1.08)}
+  #gate button:disabled{opacity:.6;cursor:default}
+  #gate .gerr{color:var(--bad);font-size:12.5px;margin-top:12px;min-height:17px}
   .logo{width:60px;height:60px;margin:0 auto 18px;border-radius:17px;
     background:linear-gradient(135deg,var(--ind),var(--cy));
     display:flex;align-items:center;justify-content:center;
@@ -135,8 +159,10 @@
   :root[data-theme="light"] .tag.rec{color:#16a34a}
   .tag.master{background:rgba(34,211,238,.13);color:#67e8f9;border-color:rgba(34,211,238,.28)}
   :root[data-theme="light"] .tag.master{color:#0891b2}
-  .nhost{font-size:11.5px;color:var(--dim2);overflow:hidden;text-overflow:ellipsis;
-    white-space:nowrap;font-family:ui-monospace,Menlo,Consolas,monospace}
+  /* 卡片第二行只显示地区名 —— 刻意不显示节点地址(IP:端口),
+     避免把节点位置直接暴露给随便路过的人 */
+  .nsub{font-size:12px;color:var(--dim2);overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap}
 
   .lat{text-align:right;flex-shrink:0;min-width:74px}
   .latv{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums}
@@ -175,7 +201,7 @@
   <button data-mode="auto" title="跟随系统"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 0 0 17z" fill="currentColor" stroke="none"/></svg></button>
 </div>
 
-<main>
+<main id="app" hidden>
   <header>
     <div class="logo">
       <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.1"
@@ -201,6 +227,27 @@
     <a href="/admin">管理面板</a>
   </footer>
 </main>
+
+<div id="boot">正在加载…</div>
+
+<!-- 访问验证页: 只有管理面板里开启"需要登录后才能使用"时才会出现 -->
+<div id="gate" hidden>
+  <div class="box">
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.1"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M4 20h16"/>
+      </svg>
+    </div>
+    <h2>需要验证</h2>
+    <div class="sub">本站已开启访问验证，请输入访问口令</div>
+    <div class="ginput">
+      <input type="password" id="gpw" autocomplete="current-password" placeholder="访问口令">
+      <button id="gbtn">进入</button>
+    </div>
+    <div class="gerr" id="gerr"></div>
+  </div>
+</div>
 
 <script>
 const $ = s => document.querySelector(s);
@@ -243,6 +290,23 @@ function flagHTML(code) {
     ' src="https://flagcdn.com/24x18/' + c + '.png"' +
     ' srcset="https://flagcdn.com/48x36/' + c + '.png 2x"' +
     ' onerror="this.remove()">';
+}
+
+// 地区代码 -> 中文名。卡片第二行显示这个, 而不是节点地址(IP:端口)。
+const REGION_NAME = {
+  HK:'中国香港', MO:'中国澳门', TW:'中国台湾', CN:'中国大陆',
+  JP:'日本', KR:'韩国', SG:'新加坡', MY:'马来西亚', TH:'泰国', VN:'越南',
+  PH:'菲律宾', ID:'印度尼西亚', IN:'印度', AE:'阿联酋', TR:'土耳其',
+  US:'美国', CA:'加拿大', MX:'墨西哥', BR:'巴西', AR:'阿根廷', CL:'智利',
+  GB:'英国', IE:'爱尔兰', DE:'德国', FR:'法国', NL:'荷兰', BE:'比利时',
+  LU:'卢森堡', CH:'瑞士', AT:'奥地利', IT:'意大利', ES:'西班牙', PT:'葡萄牙',
+  SE:'瑞典', NO:'挪威', DK:'丹麦', FI:'芬兰', PL:'波兰', CZ:'捷克',
+  RU:'俄罗斯', UA:'乌克兰', AU:'澳大利亚', NZ:'新西兰', ZA:'南非', IL:'以色列',
+};
+function regionLabel(code) {
+  if (!code) return '中转节点';
+  const k = String(code).toUpperCase();
+  return REGION_NAME[k] || k;
 }
 function latClass(ms) {
   if (!isFinite(ms)) return 'n';
@@ -306,7 +370,7 @@ function render(nodes) {
           (n.builtin ? '<span class="tag master">本机</span>' : '') +
           (n.region ? '<span class="tag">' + esc(n.region) + '</span>' : '') +
         '</div>' +
-        '<div class="nhost">' + esc((n.base || '').replace(/^https?:\/\//, '')) + '</div>' +
+        '<div class="nsub">' + esc(regionLabel(n.region)) + '</div>' +
       '</div>' +
       '<div class="lat"><div class="latv n">—</div><div class="latu">延迟</div></div>' +
       '<a class="dl off" href="' + esc(n.link) + '">下载</a>';
@@ -355,6 +419,13 @@ async function resolve() {
       body: JSON.stringify({ url })
     });
     data = await r.json();
+    // 401 = 本站开了访问验证而当前没通过 (或会话过期) -> 弹回验证页
+    if (r.status === 401) {
+      el.go.disabled = false;
+      el.res.innerHTML = '';
+      showGate('验证已失效，请重新输入访问口令');
+      return;
+    }
     if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
   } catch (e) {
     if (my !== seq) return;
@@ -408,13 +479,64 @@ el.url.addEventListener('paste', () => {
   }, 60);
 });
 
-// 支持 ?url=<下载地址> 直接解析, 方便分享链接 / 收藏成书签
-(function () {
-  const q = new URLSearchParams(location.search).get('url');
-  if (q) {
-    el.url.value = q;
+/* ---------- 访问验证 ----------
+ * 管理面板里可以开启"需要登录后才能使用"。开启后先亮验证页, 通过了才显示主界面。
+ * 真正的门禁在服务端(/api/targets 会返 401), 这里只是对应的界面。 */
+const PENDING_URL = new URLSearchParams(location.search).get('url') || '';
+
+function startApp() {
+  $('#boot').hidden = true;
+  $('#gate').hidden = true;
+  $('#app').hidden = false;
+  if (PENDING_URL) {         // 分享链接/书签带来的地址, 验证通过后再解析
+    el.url.value = PENDING_URL;
     resolve();
   }
+}
+
+function showGate(msg) {
+  $('#boot').hidden = true;
+  $('#app').hidden = true;
+  $('#gate').hidden = false;
+  $('#gerr').textContent = msg || '';
+  const p = $('#gpw');
+  if (p) p.focus();
+}
+
+async function submitGate() {
+  const pw = $('#gpw').value;
+  if (!pw) { $('#gerr').textContent = '请输入访问口令'; return; }
+  const b = $('#gbtn');
+  b.disabled = true; b.textContent = '验证中…';
+  try {
+    const r = await fetch('/api/access/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pw })
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || '口令不正确');
+    $('#gpw').value = '';
+    $('#gerr').textContent = '';
+    startApp();
+  } catch (e) {
+    $('#gerr').textContent = e.message;
+    $('#gpw').select();
+  } finally {
+    b.disabled = false; b.textContent = '进入';
+  }
+}
+
+$('#gbtn').onclick = submitGate;
+$('#gpw').addEventListener('keydown', e => { if (e.key === 'Enter') submitGate(); });
+
+(async function init() {
+  try {
+    const r = await fetch('/api/access/status');
+    const d = await r.json();
+    if (d.required && !d.ok) { showGate(); return; }
+  } catch (e) { /* 状态接口拿不到就别挡着用户, 直接进主界面 */ }
+  startApp();
 })();
 </script>
 </body>

@@ -459,6 +459,104 @@ def main():
         st, _, b = call(MASTER + "/api/admin/health/check", "POST")
         check("探测接口需要登录", st == 401, st)
 
+        # ---- 用户页面访问验证 (设置里可开关) ----
+        print("\n== 用户页面访问验证 ==")
+        st, _, b = call(MASTER + "/api/access/status")
+        d0 = json.loads(b)
+        check("默认不要求验证", st == 200 and d0["required"] is False and d0["ok"] is True,
+              b[:90])
+        st, _, b = call(MASTER + "/api/targets", "POST", {"url": TARGET})
+        check("默认免验证就能解析", st == 200, st)
+
+        st, _, b = call(MASTER + "/api/admin/config", "PUT",
+                        {"require_login": True}, cookie=cookie)
+        check("开启访问验证", st == 200, b[:90])
+        d1 = json.loads(call(MASTER + "/api/access/status")[2])
+        check("状态变为需要验证", d1["required"] is True, d1)
+        check("未验证时 status.ok 为 false", d1["ok"] is False, d1)
+
+        st, _, b = call(MASTER + "/api/targets", "POST", {"url": TARGET})
+        check("未验证时解析被拒 401", st == 401, st)
+        check("拒绝原因可读", "需要验证" in b.decode("utf-8", "replace"), b[:80])
+
+        st, _, b = call(MASTER + "/api/access/login", "POST", {"password": "wrong-pw"})
+        check("错误口令被拒", st == 401, st)
+
+        st, h, b = call(MASTER + "/api/access/login", "POST", {"password": pwd})
+        check("口令留空时回退用管理员密码", st == 200, b[:90])
+        sc = h.get("Set-Cookie", "")
+        check("下发了 dlt_access cookie", "dlt_access=" in sc, sc[:70])
+        check("验证 cookie 是 HttpOnly", "HttpOnly" in sc, sc[:90])
+        check("验证 cookie 带 SameSite", "SameSite" in sc, sc[:130])
+        acc = sc.split(";")[0]
+        check("验证 cookie 与管理会话是不同名字", "dlt_session" not in acc, acc[:40])
+
+        st, _, b = call(MASTER + "/api/targets", "POST", {"url": TARGET}, cookie=acc)
+        check("带验证 cookie 可以解析", st == 200, st)
+        st, _, b = call(MASTER + "/api/targets", "POST", {"url": TARGET}, cookie=cookie)
+        check("管理员会话直接放行(不用再输一次)", st == 200, st)
+
+        st, _, b = call(MASTER + "/api/admin/config", "PUT",
+                        {"access_password": "guest-pw-123"}, cookie=cookie)
+        check("设置自定义访问口令", st == 200, b[:90])
+        st, _, b = call(MASTER + "/api/targets", "POST", {"url": TARGET}, cookie=acc)
+        check("改口令后旧 cookie 立即失效", st == 401, st)
+        st, _, b = call(MASTER + "/api/access/login", "POST", {"password": pwd})
+        check("改口令后管理员密码不再能通过", st == 401, st)
+        st, h, b = call(MASTER + "/api/access/login", "POST", {"password": "guest-pw-123"})
+        check("新访问口令可用", st == 200, b[:90])
+        acc2 = h.get("Set-Cookie", "").split(";")[0]
+        st, _, b = call(MASTER + "/api/targets", "POST", {"url": TARGET}, cookie=acc2)
+        check("用新口令换来的 cookie 可用", st == 200, st)
+
+        st, _, b = call(MASTER + "/api/admin/config", cookie=cookie)
+        raw = b.decode("utf-8", "replace")
+        check("配置接口不回传口令本身", "guest-pw-123" not in raw, raw[:120])
+        check("配置接口标记已单独设口令", json.loads(b)["has_access_password"] is True)
+
+        st, _, b = call(MASTER + "/api/admin/config", "PUT",
+                        {"access_password": "abc"}, cookie=cookie)
+        check("过短口令被拒 400", st == 400, st)
+
+        st, _, b = call(MASTER + "/api/access/logout", "POST", cookie=acc2)
+        check("退出验证接口可用", st == 200, st)
+
+        st, _, b = call(MASTER + "/api/admin/config", "PUT",
+                        {"access_password": "", "require_login": False}, cookie=cookie)
+        check("清除口令并关闭验证", st == 200, b[:90])
+        st, _, b = call(MASTER + "/api/targets", "POST", {"url": TARGET})
+        check("关闭后恢复免验证使用", st == 200, st)
+        check("清除后标记为未单独设口令",
+              json.loads(call(MASTER + "/api/admin/config", cookie=cookie)[2])
+              ["has_access_password"] is False)
+
+        # ---- 主页面不暴露节点地址 ----
+        print("\n== 主页面不显示节点 IP / 端口 ==")
+        with open(os.path.join(ROOT, "web", "index.html"), encoding="utf-8") as fh:
+            idx = fh.read()
+        check("卡片不再渲染 n.base 文本", "n.base || ''" not in idx and "class=\"nhost\"" not in idx)
+        check("改显示地区名", "regionLabel(n.region)" in idx and "function regionLabel" in idx)
+        check("地区名映射含中国香港/中国台湾等", "中国香港" in idx and "中国台湾" in idx
+              and "中国澳门" in idx)
+        check("仍保留 base 用于浏览器直连测速(否则延迟排序失效)", "_node.base" in idx)
+
+        # ---- 验证页前端 ----
+        print("\n== 验证页前端 ==")
+        check("有验证页容器", 'id="gate"' in idx and 'id="gpw"' in idx and 'id="gbtn"' in idx)
+        check("主界面默认隐藏, 避免验证前闪出内容", 'id="app" hidden' in idx)
+        check("启动时先查 /api/access/status", "/api/access/status" in idx)
+        check("提交走 /api/access/login", "/api/access/login" in idx)
+        check("解析遇 401 会弹回验证页", "r.status === 401" in idx and "showGate(" in idx)
+        check("验证通过后才解析分享链接", "PENDING_URL" in idx and "function startApp" in idx)
+        with open(os.path.join(ROOT, "web", "admin.html"), encoding="utf-8") as fh:
+            adm2 = fh.read()
+        check("管理面板有访问验证开关", 'id="c-require"' in adm2)
+        check("管理面板有访问口令输入", 'id="c-accesspass"' in adm2)
+        check("管理面板可清除自定义口令", 'id="clearAccess"' in adm2)
+        check("保存时带上 require_login", "require_login: $('#c-require').value === '1'" in adm2)
+        check("空口令不会被误清空(需显式点清除)",
+              "else if (accessCleared) body.access_password = ''" in adm2)
+
         # ---- 管理面板的复制按钮 ----
         # navigator.clipboard 只在安全上下文可用; 面板常用 http://<IP>:端口 打开,
         # 直接调用会同步抛 TypeError 打断 onclick —— 表现是"点按钮完全没反应"。

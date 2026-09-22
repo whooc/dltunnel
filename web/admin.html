@@ -377,6 +377,24 @@
         <div class="field"><label>新密码（留空则不修改）</label>
           <input type="password" id="c-pass" placeholder="不修改请留空"></div>
       </div>
+      <div class="row">
+        <div class="field"><label>用户页面访问验证</label>
+          <select id="c-require">
+            <option value="0">关闭（任何人可直接使用）</option>
+            <option value="1">开启（需输入访问口令）</option>
+          </select></div>
+        <div class="field"><label>访问口令</label>
+          <div class="keybox">
+            <input type="password" id="c-accesspass" placeholder="留空则不修改">
+            <button class="btn-s btn-sm" id="clearAccess">清除</button>
+          </div></div>
+      </div>
+      <div class="hintbox">
+        开启后，访问用户页面会先要求输入<b>访问口令</b>，通过后才能解析下载地址 ——
+        这样节点地址不会暴露给随便路过的人。口令留空则直接用<b>管理员密码</b>；
+        点「清除」可恢复成用管理员密码。验证通过后有效期 30 天，改口令会立刻让已发出的验证失效。
+        <br>当前状态：<span id="accessState">—</span>
+      </div>
       <button class="btn-s" id="saveCfg">保存设置</button>
     </div>
 
@@ -926,10 +944,29 @@ async function loadCfg() {
     $('#c-user').value = d.admin_user;
     $('#c-region').value = d.master_region || '';
     $('#c-retain').value = String(d.record_retain_days);
+    $('#c-require').value = d.require_login ? '1' : '0';
+    // 口令本身不回传, 只回"有没有单独设过"
+    $('#c-accesspass').value = '';
+    $('#c-accesspass').placeholder = d.has_access_password
+      ? '留空则不修改（当前已单独设置）' : '留空则不修改（当前用管理员密码）';
+    $('#accessState').innerHTML = d.require_login
+      ? '<b style="color:var(--ok)">已开启</b>，口令来源：' +
+        (d.has_access_password ? '自定义访问口令' : '管理员密码')
+      : '<b style="color:var(--warn)">已关闭</b>，任何人可直接使用';
     MASTER_REGION = d.master_region || '';
     renderNodes();
   } catch (e) { /* ignore */ }
 }
+
+// 口令输入框留空有两种含义(不修改 / 清除), 用这个标记区分 ——
+// 点过「清除」再保存, 才会真的把自定义口令抹掉, 回退成用管理员密码。
+let accessCleared = false;
+$('#clearAccess').onclick = () => {
+  accessCleared = true;
+  $('#c-accesspass').value = '';
+  $('#c-accesspass').placeholder = '将改为使用管理员密码';
+  toast('已标记清除，请点「保存设置」生效', 'ok');
+};
 
 $('#saveCfg').onclick = async () => {
   const body = {
@@ -937,12 +974,17 @@ $('#saveCfg').onclick = async () => {
     allow_private: $('#c-priv').value === '1',
     new_username: $('#c-user').value.trim(),
     master_region: $('#c-region').value.trim().toUpperCase(),
-    record_retain_days: parseInt($('#c-retain').value, 10)
+    record_retain_days: parseInt($('#c-retain').value, 10),
+    require_login: $('#c-require').value === '1'
   };
   const pw = $('#c-pass').value.trim();
   if (pw) body.new_password = pw;
+  const ap = $('#c-accesspass').value.trim();
+  if (ap) body.access_password = ap;
+  else if (accessCleared) body.access_password = '';
   try {
     await api('/api/admin/config', { method: 'PUT', body: JSON.stringify(body) });
+    accessCleared = false;
     $('#c-pass').value = '';
     toast('设置已保存', 'ok');
     loadCfg(); loadStats();

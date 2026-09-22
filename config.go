@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -36,6 +37,14 @@ type Config struct {
 	// nil = 老配置未设置(按 30 天), 0 = 不记录, >0 = 保留这么多天, <0 = 永久.
 	RecordRetainDays *int `json:"record_retain_days,omitempty"`
 
+	// RequireLogin 打开后, 用户页面必须先通过口令验证才能解析下载地址.
+	// 默认关闭 —— 老配置文件里没这个字段时反序列化成 false, 行为不变。
+	RequireLogin bool `json:"require_login,omitempty"`
+
+	// AccessPassword 是用户页面的访问口令.
+	// 留空则回退用管理员密码(方便不想多记一个密码的人)。
+	AccessPassword string `json:"access_password,omitempty"`
+
 	Nodes []Node `json:"nodes"`
 }
 
@@ -45,6 +54,14 @@ func (c Config) RetainDays() int {
 		return 30
 	}
 	return *c.RecordRetainDays
+}
+
+// accessPassword 返回用户页面实际生效的访问口令: 没单独设就用管理员密码.
+func (c Config) accessPassword() string {
+	if p := strings.TrimSpace(c.AccessPassword); p != "" {
+		return p
+	}
+	return c.AdminPass
 }
 
 type Store struct {

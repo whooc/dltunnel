@@ -3,7 +3,9 @@ package main
 import (
 	"crypto/subtle"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net"
@@ -17,7 +19,18 @@ import (
 //go:embed web
 var webFS embed.FS
 
+// errAccessPasswordTooShort 访问口令太短 (在 Update 回调里返回, 由外层翻译成 400)。
+var errAccessPasswordTooShort = errors.New("访问口令太短")
+
 const sessionTTL = 12 * time.Hour
+
+// accessTTL 用户页面验证通过后的有效期. 比管理会话长很多 ——
+// 普通用户不该每天都被要求重新输一次口令。
+const accessTTL = 30 * 24 * time.Hour
+
+// accessCookie 用户页面的验证 cookie 名 (与管理面板的 dlt_session 分开)。
+const accessCookie = "dlt_access"
+
 
 // 节点健康探测间隔
 const healthInterval = 30 * time.Second
@@ -118,6 +131,12 @@ func (m *Master) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		m.handleDownload(w, r)
 	case p == "/api/targets":
 		m.apiTargets(w, r)
+	case p == "/api/access/status":
+		m.apiAccessStatus(w, r)
+	case p == "/api/access/login":
+		m.apiAccessLogin(w, r)
+	case p == "/api/access/logout":
+		m.apiAccessLogout(w, r)
 	case p == "/api/admin/records":
 		m.apiRecords(w, r)
 	case p == "/api/admin/health/check":
@@ -215,6 +234,11 @@ type targetNode struct {
 func (m *Master) apiTargets(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		fail(w, http.StatusMethodNotAllowed, "只支持 POST")
+		return
+	}
+	// 开启访问验证后, 未通过验证的请求拿不到任何节点信息(也就拿不到节点地址)
+	if !m.accessOK(r) {
+		fail(w, http.StatusUnauthorized, "需要验证后才能使用")
 		return
 	}
 	var body struct {
@@ -361,6 +385,91 @@ func (m *Master) requireAuth(w http.ResponseWriter, r *http.Request) bool {
 	}
 	return true
 }
+
+// ---- 用户页面的访问验证 (可选开启) ----
+//
+// 打开 require_login 后, 用户页面必须先输口令才能解析下载地址。
+// 目的: 不把节点地址暴露给随便路过的人, 降低节点被扫出来打的风险。
+// 口令没单独设置时回退用管理员密码; 管理员已登录管理面板的话直接放行。
+
+// accessSubject 是访客会话的主体标识。
+// 里面掺了访问口令的 HMAC —— 这样管理员改了口令之后, 之前发出去的会话立刻失效,
+// 不用轮换 session_key。用 HMAC 而不是裸哈希是为了不让 cookie 里泄露口令摘要。
+func accessSubject(cfg Config) string {
+	return "guest." + hex.EncodeToString(hmacSum(cfg.SessionKey, "access|"+cfg.accessPassword()))[:16]
+}
+
+// accessOK 判断当前请求是否已通过用户页面验证 (未开启验证时永远为真)。
+func (m *Master) accessOK(r *http.Request) bool {
+	cfg := m.store.Get()
+	if !cfg.RequireLogin {
+		return true
+	}
+	// 管理员登录了管理面板, 就不用再输一次用户页口令
+	if c, err := r.Cookie("dlt_session"); err == nil {
+		if _, ok := checkSession(cfg.SessionKey, c.Value); ok {
+			return true
+		}
+	}
+	c, err := r.Cookie(accessCookie)
+	if err != nil {
+		return false
+	}
+	sub, ok := checkSession(cfg.SessionKey, c.Value)
+	return ok && sub == accessSubject(cfg)
+}
+
+// apiAccessStatus 给前端判断: 要不要显示验证页, 以及当前是否已通过。
+func (m *Master) apiAccessStatus(w http.ResponseWriter, r *http.Request) {
+	cfg := m.store.Get()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"required": cfg.RequireLogin,
+		"ok":       m.accessOK(r),
+	})
+}
+
+// apiAccessLogin 校验访问口令, 通过则下发 dlt_access cookie。
+func (m *Master) apiAccessLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		fail(w, http.StatusMethodNotAllowed, "只支持 POST")
+		return
+	}
+	var body struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
+		fail(w, http.StatusBadRequest, "请求体解析失败")
+		return
+	}
+	cfg := m.store.Get()
+	if !cfg.RequireLogin {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(body.Password), []byte(cfg.accessPassword())) != 1 {
+		time.Sleep(400 * time.Millisecond) // 简单的爆破减速
+		fail(w, http.StatusUnauthorized, "口令不正确")
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     accessCookie,
+		Value:    makeSession(cfg.SessionKey, accessSubject(cfg), accessTTL),
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(accessTTL.Seconds()),
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// apiAccessLogout 清掉访客 cookie。
+func (m *Master) apiAccessLogout(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name: accessCookie, Value: "", Path: "/", HttpOnly: true, MaxAge: -1,
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 
 // ---- 管理面板: 节点 ----
 
@@ -592,6 +701,9 @@ func (m *Master) apiConfig(w http.ResponseWriter, r *http.Request) {
 			"master_secret":      cfg.MasterSecret,
 			"master_region":      cfg.MasterRegion,
 			"record_retain_days": cfg.RetainDays(),
+			"require_login":      cfg.RequireLogin,
+			// 只回"有没有单独设口令", 不回口令本身
+			"has_access_password": strings.TrimSpace(cfg.AccessPassword) != "",
 		})
 	case http.MethodPut:
 		var in struct {
@@ -602,6 +714,9 @@ func (m *Master) apiConfig(w http.ResponseWriter, r *http.Request) {
 			MasterSecret     *string `json:"master_secret"`
 			MasterRegion     *string `json:"master_region"`
 			RecordRetainDays *int    `json:"record_retain_days"`
+			RequireLogin     *bool   `json:"require_login"`
+			// nil = 不改动; "" = 清空(回退用管理员密码); 其它 = 设为该值
+			AccessPassword *string `json:"access_password"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&in); err != nil {
 			fail(w, http.StatusBadRequest, "请求体解析失败")
@@ -642,8 +757,22 @@ func (m *Master) apiConfig(w http.ResponseWriter, r *http.Request) {
 				}
 				c.RecordRetainDays = &v
 			}
+			if in.RequireLogin != nil {
+				c.RequireLogin = *in.RequireLogin
+			}
+			if in.AccessPassword != nil {
+				p := strings.TrimSpace(*in.AccessPassword)
+				if p != "" && len(p) < 4 {
+					return errAccessPasswordTooShort
+				}
+				c.AccessPassword = p
+			}
 			return nil
 		})
+		if err == errAccessPasswordTooShort {
+			fail(w, http.StatusBadRequest, "访问口令至少 4 位")
+			return
+		}
 		if err != nil {
 			fail(w, http.StatusInternalServerError, "保存失败: "+err.Error())
 			return
