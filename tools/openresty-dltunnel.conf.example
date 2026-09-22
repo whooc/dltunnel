@@ -1,0 +1,49 @@
+# dltunnel 反向代理站点配置模板 (OpenResty / Nginx)
+#
+# 用法: 把 __DOMAIN__ 换成你的域名, 落地到
+#   /opt/1panel/apps/openresty/openresty/conf/conf.d/__DOMAIN__.conf
+# 并配套创建站点目录与 proxy/root.conf (见 docs/dltunnel-domain-plan.md)。
+#
+# 注意: 本模板刻意关闭了 proxy_cache —— 如果你的 http {} 块里有全局
+# proxy_cache, 不关掉会导致下载内容被缓存落盘, 违背 dltunnel 的不落盘设计。
+
+server {
+    listen 80;
+    server_name __DOMAIN__;
+
+    access_log /www/sites/__DOMAIN__/log/access.log;
+    error_log  /www/sites/__DOMAIN__/log/error.log;
+
+    # ACME http-01 挑战 (证书续期用)
+    location ^~ /.well-known/acme-challenge {
+        allow all;
+        root /usr/share/nginx/html;
+    }
+
+    include /www/sites/__DOMAIN__/proxy/*.conf;
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name __DOMAIN__;
+
+    # 通配符证书: 加子域不用重新签发
+    ssl_certificate     /www/sites/__DOMAIN__/ssl/fullchain.pem;
+    ssl_certificate_key /www/sites/__DOMAIN__/ssl/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    access_log /www/sites/__DOMAIN__/log/access.log;
+    error_log  /www/sites/__DOMAIN__/log/error.log;
+
+    location ^~ /.well-known/acme-challenge {
+        allow all;
+        root /usr/share/nginx/html;
+    }
+
+    include /www/sites/__DOMAIN__/proxy/*.conf;
+}

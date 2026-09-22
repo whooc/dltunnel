@@ -11,6 +11,7 @@
    (测速/下载)      │  ├─ /        用户页面                │
       │             │  ├─ /admin   管理面板                │
       │             │  ├─ /dl      自身也是一个下载节点     │
+      │             │  ├─ /agent.sh 从节点一键安装脚本      │
       │             │  └─ /api/*   签发令牌 / 节点管理      │
       │             └──────────────┬──────────────────────┘
       │                            │ HMAC-SHA256 令牌
@@ -20,7 +21,8 @@
                    └──────────┴──────────┴──────────┘
 ```
 
-**同一份二进制，两种模式**：`-mode master` 与 `-mode agent`。
+**同一份二进制，两种模式**：`-mode master` 与 `-mode agent`。纯 Go 标准库，零第三方依赖，
+交叉编译出一个几 MB 的静态二进制，扔到服务器上就能跑。
 
 - 主服务器**不承担下载流量**。它只做两件事：给每个节点签发带签名的下载令牌、提供管理面板。
 - 浏览器拿到令牌后**直连**选中的节点下载，所以"延迟排序"是用户视角的真实延迟。
@@ -37,6 +39,15 @@
 | 主从权限一致 | `allow_private` 开关随令牌下发，从节点按令牌执行，无需单独配置 |
 | 长下载不中断 | 服务端刻意**不设** `WriteTimeout`，大文件可跑数十分钟 |
 | 内存占用 | `GOMEMLIMIT` 限制 Go GC 目标，1.9G 内存的机器也稳 |
+| 节点故障自动隐藏 | 后台每 30 秒探测 `/__ping`，连续 2 次失败才判离线，离线节点不出现在用户页面 |
+
+## 界面
+
+- **用户页**：粘贴地址 → 列出全部节点 → 浏览器并发测速 → 按延迟升序排列，最快的一条标「推荐」。
+- **主题**：白天 / 夜晚 / 跟随系统，三态切换，记住选择，首屏无闪烁。
+- **国旗**：每个节点可按地区代码显示国旗，一眼看出落地在哪。
+- **管理面板**：节点增删启停、实时健康状态、下载解析记录（含日期筛选、关键词搜索、分页）、
+  令牌有效期、地区标识、记录保留策略、从节点一键安装命令。
 
 ## 分享 / 收藏下载链接
 
@@ -50,54 +61,72 @@ http://<主服务器>:20808/?url=https://example.com/big.iso
 
 ## 部署
 
-### 主服务器
+### 主服务器（一键）
 
 ```bash
-python tools/deploy_dltunnel.py master --host <IP> --password <SSH密码>
+curl -fsSL https://raw.githubusercontent.com/whooc/dltunnel/main/install.sh | bash
 ```
 
-首次启动会生成 `/opt/dltunnel/data/config.json`，并在日志里打印管理面板初始密码：
+默认装到 `/opt/dltunnel`，监听 `:20808`，注册 systemd 服务 `dltunnel` 并开机自启。
+可选参数：`--port 20808`、`--dir /opt/dltunnel`、`--version v1.1.0`。
+
+安装完成后查看管理面板初始密码：
 
 ```bash
 journalctl -u dltunnel -n 20 | grep 密码
 ```
 
-### 添加从节点
-
-1. 管理面板 →「+ 添加从节点」→ 填写名称和地址，**复制弹窗里生成的命令和密钥**
-2. 在从服务器上执行：
+### 主服务器（从源码）
 
 ```bash
-python tools/deploy_dltunnel.py agent --host <从服务器IP> --password <密码> \
-    --name "HK-01" --secret <面板里的密钥>
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o dltunnel .
+scp dltunnel root@<IP>:/opt/dltunnel/dltunnel
 ```
 
-3. 回到面板点「测试」，出现绿色延迟数字即接通
+### 添加从节点（一键）
+
+1. 管理面板 →「设置」页 → 生成节点密钥，复制那条 `curl ... | bash -s -- --secret ...` 命令
+2. 在从服务器上以 root 执行这条命令
+3. 脚本会打印该节点的公网地址，回到面板「节点」页把它填进去
+4. 点「测试」出现绿色延迟数字即接通
+
+安装脚本由**主服务器动态生成**，二进制也从主服务器 `/bin/` 拉取 ——
+从节点不需要能访问 GitHub，也不需要能访问外网。
 
 ### 手动运行（不走 systemd）
 
 ```bash
-./dltunnel -mode master -listen :20808 -data ./data
+./dltunnel -mode master -listen :20808 -data ./data -bindir ./bin
 ./dltunnel -mode agent  -listen :20809 -name "HK-01" -secret <密钥>
 ```
 
-## 重新编译
+## 用域名访问（可选）
 
-```bash
-cd dltunnel && ../tools/build.sh      # 或直接:
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o dist/dltunnel_linux_amd64 .
+`dltunnel` 自身只监听高位端口（默认 20808），用 IP 直连最省事。要挂域名就在前面加一层反向代理。
+
+**用 Nginx / OpenResty 反代时有两个必须关掉的开关**，否则会破坏"不落盘"：
+
+```nginx
+location ^~ / {
+    proxy_pass http://127.0.0.1:20808;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # —— 关键 ——
+    proxy_buffering off;          # 否则大文件先落盘再转发, 且无法边下边传
+    proxy_request_buffering off;
+    proxy_cache off;              # 若 http 块里有全局 proxy_cache, 必须显式关掉
+    proxy_read_timeout 3600s;     # 大文件下载可能跑几十分钟
+    proxy_send_timeout 3600s;
+    chunked_transfer_encoding on;
+    client_max_body_size 0;
+}
 ```
 
-无第三方依赖，纯标准库，交叉编译即可。
-
-## 测试
-
-```bash
-python dltunnel/test_e2e.py
-```
-
-45 项端到端断言，覆盖：接口可用性、SSRF 防护、鉴权、令牌伪造、
-**中转字节 md5 完整性**、Range 断点续传、主从权限一致性、节点增删启停、64MB 流式传输。
+HTTPS 直接在反代层做（Let's Encrypt / acme.sh 通配符证书均可），
+`X-Forwarded-Proto` 会被程序读取，用于生成正确的下载直链。
 
 ## HTTP 接口
 
@@ -105,18 +134,38 @@ python dltunnel/test_e2e.py
 |---|---|---|
 | GET | `/` | 用户页面 |
 | GET | `/admin` | 管理面板 |
+| GET | `/health` | 纯文本健康检查 |
+| GET | `/__ping` | 延迟探测（无鉴权，节点互相探测用） |
+| GET | `/agent.sh?secret=&name=&port=` | 动态生成从节点安装脚本 |
+| GET | `/bin/{dltunnel-linux-amd64\|arm64}` | 分发二进制（白名单，防路径穿越） |
 | POST | `/api/targets` | `{"url":"..."}` → 各节点的签名下载直链 |
 | GET | `/dl?t=<令牌>` | 流式中转下载 |
-| GET | `/__ping` | 延迟探测（无鉴权） |
 | POST | `/api/login` | 面板登录 |
-| GET/POST | `/api/admin/nodes` | 节点列表 / 新增 |
+| GET/POST | `/api/admin/nodes` | 节点列表（含健康状态）/ 新增 |
 | PUT/DELETE | `/api/admin/nodes/{id}` | 修改 / 删除 |
 | POST | `/api/admin/nodes/{id}/test` | 主服务器侧测节点延迟 |
-| GET/PUT | `/api/admin/config` | 全局配置 |
+| POST | `/api/admin/health/check` | 立即重测全部节点 |
+| GET/DELETE | `/api/admin/records` | 下载记录查询（`from`/`to`/`q`/`limit`/`offset`）/ 清空 |
+| GET/PUT | `/api/admin/config` | 全局配置（令牌有效期、地区、保留天数、账号） |
 | GET | `/api/admin/stats` | 运行统计 |
+
+## 测试
+
+```bash
+python dltunnel/test_e2e.py        # 45 项: 基础回归
+python dltunnel/test_features.py   # 48 项: 主题/记录/健康/一键安装/配置
+```
+
+覆盖：接口可用性、SSRF 防护、鉴权、令牌伪造、**中转字节 md5 完整性**、Range 断点续传、
+主从权限一致性、节点增删启停、64MB 流式传输、记录筛选与保留策略、离线节点过滤。
 
 ## 注意
 
 - 管理面板统计的「累计中转」只统计**主服务器自身节点**的流量；各从节点在各自进程内独立统计。
-- 服务默认监听 `:20808`（主）/ `:20809`（从），未占用 80/443。
+- 服务默认监听 `:20808`（主）/ `:20809`（从），不占用 80/443。
 - 换密钥后需同步更新从节点上 agent 的 `-secret` 并 `systemctl restart dltunnel-agent`。
+- 下载记录只保存**元数据**（时间、来源 IP、目标地址、可用节点数），不含任何下载内容。
+
+## License
+
+MIT
