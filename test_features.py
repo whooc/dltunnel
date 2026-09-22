@@ -179,6 +179,15 @@ def main():
                          "secret": "s-dead", "enabled": True}, cookie=cookie)
         dead_id = json.loads(b)["node"]["id"]
 
+        # 不传 enabled 时应默认启用: 面板之外的调用(脚本/curl)常省略该字段
+        st, _, b = call(MASTER + "/api/admin/nodes", "POST",
+                        {"name": "默认启用节点", "base_url": AGENT, "region": "jp",
+                         "secret": "s-default"}, cookie=cookie)
+        dnode = json.loads(b)["node"]
+        check("不传 enabled 时默认启用", dnode.get("enabled") is True, dnode.get("enabled"))
+        check("地区代码自动转大写", dnode.get("region") == "JP", dnode.get("region"))
+        call(MASTER + "/api/admin/nodes/" + dnode["id"], "DELETE", cookie=cookie)
+
         st, _, b = call(MASTER + "/api/admin/health/check", "POST", cookie=cookie)
         check("手动触发探测返回健康数据", st == 200 and "health" in json.loads(b), b[:120])
         st, _, b = call(MASTER + "/api/admin/health/check", "POST", cookie=cookie)

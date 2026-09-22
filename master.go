@@ -378,13 +378,27 @@ func (m *Master) apiNodes(w http.ResponseWriter, r *http.Request) {
 			"health": m.health.Snapshot(),
 		})
 	case http.MethodPost:
-		var n Node
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&n); err != nil {
+		// enabled 用指针接收: 不传时默认启用, 避免"加完节点却不出现在用户页面"
+		var in struct {
+			Name    string `json:"name"`
+			BaseURL string `json:"base_url"`
+			Secret  string `json:"secret"`
+			Region  string `json:"region"`
+			Remark  string `json:"remark"`
+			Enabled *bool  `json:"enabled"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&in); err != nil {
 			fail(w, http.StatusBadRequest, "请求体解析失败")
 			return
 		}
-		n.Name = strings.TrimSpace(n.Name)
-		n.BaseURL = normalizeBase(n.BaseURL)
+		n := Node{
+			Name:    strings.TrimSpace(in.Name),
+			BaseURL: normalizeBase(in.BaseURL),
+			Secret:  strings.TrimSpace(in.Secret),
+			Region:  strings.ToUpper(strings.TrimSpace(in.Region)),
+			Remark:  strings.TrimSpace(in.Remark),
+			Enabled: in.Enabled == nil || *in.Enabled,
+		}
 		if n.Name == "" {
 			fail(w, http.StatusBadRequest, "节点名称不能为空")
 			return
@@ -450,8 +464,8 @@ func (m *Master) apiNodeItem(w http.ResponseWriter, r *http.Request) {
 				if in.Secret != "" {
 					c.Nodes[i].Secret = in.Secret
 				}
-				c.Nodes[i].Region = in.Region
-				c.Nodes[i].Remark = in.Remark
+				c.Nodes[i].Region = strings.ToUpper(strings.TrimSpace(in.Region))
+				c.Nodes[i].Remark = strings.TrimSpace(in.Remark)
 				c.Nodes[i].Enabled = in.Enabled
 			}
 			return nil

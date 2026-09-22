@@ -131,10 +131,16 @@ echo " 安装目录 : $DIR"
 echo " 服务名   : $SVC"
 echo "============================================"
 echo ""
-echo "管理面板初始密码："
-journalctl -u "$SVC" --no-pager -n 40 2>/dev/null | grep "管理面板登录" | tail -1 | sed 's/^.*dltunnel.*: //' | sed 's/^/    /'
-echo ""
-echo "（上面没显示出来就手动查: journalctl -u $SVC | grep 密码）"
+PWLINES="$(journalctl -u "$SVC" --no-pager -n 60 2>/dev/null | grep "管理面板登录" | tail -1 | sed 's/^.*dltunnel.*: //')"
+if [ -n "$PWLINES" ]; then
+  echo "管理面板初始密码："
+  echo "    $PWLINES"
+else
+  echo "管理面板密码："
+  echo "    本次是覆盖安装，密码沿用原有配置（未重置）。"
+  echo "    忘记密码可查看: cat $DIR/data/config.json"
+  echo "    首次安装的密码在日志里: journalctl -u $SVC | grep 管理面板登录"
+fi
 echo ""
 echo "下一步：登录管理面板 → 添加从节点 → 复制生成的命令到其它服务器执行。"
 echo "查看日志: journalctl -u $SVC -f"
