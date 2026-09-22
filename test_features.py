@@ -22,6 +22,14 @@ import time
 import urllib.error
 import urllib.request
 
+# Windows 控制台默认不是 UTF-8 (cp936/cp1252), 直接 print 中文会 UnicodeEncodeError.
+# CI 的 windows-latest 上就踩过这个坑, 这里统一把输出流切成 UTF-8.
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
