@@ -11,6 +11,7 @@ import hashlib
 import http.server
 import json
 import os
+import platform
 import re
 import shutil
 import socket
@@ -22,7 +23,20 @@ import urllib.error
 import urllib.request
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-EXE = os.path.join(ROOT, "dist", "dltunnel.exe")
+
+
+def _find_exe():
+    """定位被测二进制: 优先 DL_BIN 环境变量, 否则按平台推断 (CI 跑在 Linux 上)."""
+    env = os.environ.get("DL_BIN")
+    if env:
+        return os.path.abspath(env)
+    if os.name == "nt":
+        return os.path.join(ROOT, "dist", "dltunnel.exe")
+    arch = "arm64" if platform.machine().lower() in ("aarch64", "arm64") else "amd64"
+    return os.path.join(ROOT, "dist", "dltunnel-linux-" + arch)
+
+
+EXE = _find_exe()
 DIST = os.path.join(ROOT, "dist")
 MASTER = "http://127.0.0.1:18080"
 AGENT = "http://127.0.0.1:18081"

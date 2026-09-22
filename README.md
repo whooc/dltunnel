@@ -1,5 +1,9 @@
 # dltunnel — 网页中转下载器
 
+[![CI](https://github.com/whooc/dltunnel/actions/workflows/ci.yml/badge.svg)](https://github.com/whooc/dltunnel/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/whooc/dltunnel)](https://github.com/whooc/dltunnel/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 粘贴一个下载地址，页面列出**所有中转节点**，并按**你的实测延迟**排序，挑最快的下载。
 主从节点全程流式中转，**不落盘、不留存文件**，不占用服务器磁盘。
 
@@ -178,13 +182,29 @@ HTTPS 直接在反代层做（Let's Encrypt / acme.sh 通配符证书均可）�
 
 ## 测试
 
+先编译（测试会启动真实进程）：
+
 ```bash
-python dltunnel/test_e2e.py        # 45 项: 基础回归
-python dltunnel/test_features.py   # 48 项: 主题/记录/健康/一键安装/配置
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o dist/dltunnel-linux-amd64 .
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o dist/dltunnel-linux-arm64 .
+```
+
+再跑：
+
+```bash
+python test_e2e.py        # 45 项: 基础回归
+python test_features.py   # 78 项: 主题 / 记录 / 健康 / 一键安装卸载 / 配置
 ```
 
 覆盖：接口可用性、SSRF 防护、鉴权、令牌伪造、**中转字节 md5 完整性**、Range 断点续传、
-主从权限一致性、节点增删启停、64MB 流式传输、记录筛选与保留策略、离线节点过滤。
+主从权限一致性、节点增删启停、64MB 流式传输、记录筛选与保留策略、离线节点过滤、
+安装/卸载脚本内容与护栏、版本号格式。
+
+测试会自动按平台选择被测二进制（Windows 用 `dist/dltunnel.exe`，
+Linux 用 `dist/dltunnel-linux-{amd64,arm64}`），也可以用 `DL_BIN` 显式指定。
+
+CI 在 `ubuntu-latest` 与 `windows-latest` 上各跑一遍，见
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml)。
 
 ## 注意
 
