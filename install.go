@@ -23,7 +23,8 @@ SERVER="__SERVER__"
 SECRET="__SECRET__"
 NODE_NAME="__NAME__"
 PORT="__PORT__"
-DIR="/opt/dltunnel"
+# 刻意与主服务器的 /opt/dltunnel 分开, 避免同机部署时互相覆盖二进制
+DIR="/opt/dltunnel-agent"
 SVC="dltunnel-agent"
 
 if [ "$(id -u)" != "0" ]; then
@@ -52,7 +53,7 @@ fi
 
 echo "==> 架构 $ARCH -> $BIN"
 echo "==> 从主服务器下载二进制"
-mkdir -p "$DIR/data"
+mkdir -p "$DIR"
 curl -fsSL "$SERVER/bin/$BIN" -o "$DIR/dltunnel.new"
 chmod 0755 "$DIR/dltunnel.new"
 mv -f "$DIR/dltunnel.new" "$DIR/dltunnel"

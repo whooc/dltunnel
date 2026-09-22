@@ -224,6 +224,9 @@ def main():
         check("脚本内嵌节点名", 'NODE_NAME="HK-01"' in txt)
         check("脚本内嵌端口", 'PORT="20809"' in txt)
         check("脚本会写 systemd 服务", 'SVC="dltunnel-agent"' in txt and "/etc/systemd/system/$SVC.service" in txt)
+        check("脚本安装目录与主服务器隔离",
+              'DIR="/opt/dltunnel-agent"' in txt and 'DIR="/opt/dltunnel"' not in txt,
+              "避免同机部署覆盖主服务器二进制")
         check("脚本含架构分支", "dltunnel-linux-arm64" in txt and "dltunnel-linux-amd64" in txt)
         check("脚本做 root 检查", "id -u" in txt)
         check("脚本会打印面板回填地址", "管理面板" in txt)
