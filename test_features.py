@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 # Windows 控制台默认不是 UTF-8 (cp936/cp1252), 直接 print 中文会 UnicodeEncodeError.
@@ -42,6 +43,23 @@ def _find_exe():
         return os.path.join(ROOT, "dist", "dltunnel.exe")
     arch = "arm64" if platform.machine().lower() in ("aarch64", "arm64") else "amd64"
     return os.path.join(ROOT, "dist", "dltunnel-linux-" + arch)
+
+
+def _find_bash():
+    """定位可用的 bash, 用于验证安装脚本的参数解析逻辑 (找不到就跳过相关用例)."""
+    cands = ["bash"]
+    if os.name == "nt":
+        cands += [r"C:\Program Files\Git\bin\bash.exe",
+                  r"C:\Program Files\Git\usr\bin\bash.exe",
+                  r"C:\Program Files (x86)\Git\bin\bash.exe"]
+    for c in cands:
+        try:
+            p = subprocess.run([c, "-c", "echo ok"], capture_output=True, timeout=20)
+            if p.returncode == 0 and b"ok" in p.stdout:
+                return c
+        except Exception:
+            continue
+    return None
 
 
 EXE = _find_exe()
@@ -275,6 +293,107 @@ def main():
         st, _, b = call(MASTER + "/agent.sh")
         check("无参数也返回脚本(由脚本自身报错)", st == 200 and b.startswith(b"#!/usr/bin/env bash"))
 
+        # ---- 面板生成的是 bash 参数形式: /agent.sh | bash -s -- --secret .. ----
+        # 服务端必须支持解析这些参数, 否则脚本里的密钥是空的, 装不上。
+        check("脚本支持 --secret/--name/--port 参数", "while [ $# -gt 0 ]" in txt
+              and "--secret)" in txt and "--name)" in txt and "--port)" in txt)
+        check("脚本支持 --help", "--help)" in txt and "用法" in txt)
+        check("脚本校验端口为纯数字", "*[!0-9]*" in txt)
+        check("systemd unit 权限收紧(含密钥)", "chmod 0600" in txt)
+
+        BASH = _find_bash()
+        if not BASH:
+            print("  [skip] 找不到 bash, 跳过参数解析的功能验证")
+        else:
+            print("\n== /agent.sh 参数解析功能验证 (截取参数解析段单独跑) ==")
+            head = txt.split('if [ "$(id -u)"')[0]
+            probe = head + '\necho "PARSED:$SECRET|$NODE_NAME|$PORT|$SERVER"\n'
+            pf = os.path.join(ROOT, "agent_parse_probe.sh")
+            with open(pf, "w", encoding="utf-8", newline="\n") as f:
+                f.write(probe)
+
+            def run_probe(args, script=None):
+                path = pf
+                if script is not None:
+                    path = os.path.join(ROOT, "agent_parse_probe2.sh")
+                    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+                        fh.write(script)
+                p = subprocess.run([BASH, path] + args, capture_output=True, timeout=60)
+                return (p.returncode, p.stdout.decode("utf-8", "replace").strip(),
+                        p.stderr.decode("utf-8", "replace").strip())
+
+            # 1) 面板形式: 参数放在 -- 之后, 应覆盖 query 里的默认值
+            rc, out, err = run_probe(["--secret", "s3cr3t", "--name", "2THK", "--port", "20809"])
+            check("bash 参数覆盖默认值", rc == 0 and
+                  out == "PARSED:s3cr3t|2THK|20809|http://127.0.0.1:18080",
+                  "rc=%s out=%s err=%s" % (rc, out, err[:120]))
+
+            # 2) 不带参数: 沿用 query 里的默认值
+            rc, out, err = run_probe([])
+            check("不带参数时沿用 query 默认值", rc == 0 and
+                  out == "PARSED:abc123|HK-01|20809|http://127.0.0.1:18080",
+                  "rc=%s out=%s" % (rc, out))
+
+            # 3) 用户实际遇到的场景: 无 query, 全靠参数
+            st, _, b0 = call(MASTER + "/agent.sh")
+            t0 = b0.decode("utf-8", "replace")
+            head0 = t0.split('if [ "$(id -u)"')[0]
+            probe0 = head0 + '\necho "PARSED:$SECRET|$NODE_NAME|$PORT|$SERVER"\n'
+            rc, out, err = run_probe(
+                ["--secret", "6fabd595a8d2d86056648c87155f762fb0d4e0740f337268",
+                 "--name", "2THK", "--port", "20809"], script=probe0)
+            check("无 query + 纯参数形式可用(用户报错的命令)", rc == 0 and out ==
+                  "PARSED:6fabd595a8d2d86056648c87155f762fb0d4e0740f337268|2THK|20809|"
+                  "http://127.0.0.1:18080", "rc=%s out=%s err=%s" % (rc, out, err[:120]))
+
+            # 4) --help 退出码 0
+            rc, out, err = run_probe(["--help"])
+            check("--help 退出码 0 且打印用法", rc == 0 and "用法" in out, "rc=%s out=%s" % (rc, out[:80]))
+
+            # 5) 参数缺取值要明确报错
+            rc, out, err = run_probe(["--secret"])
+            check("参数缺取值时报错退出", rc != 0 and "缺少取值" in (out + err),
+                  "rc=%s out=%s" % (rc, out[:80]))
+
+            # 6) 未知参数要报错, 不能静默忽略
+            rc, out, err = run_probe(["--secrett", "x"])
+            check("未知参数报错退出", rc != 0 and "未知参数" in (out + err),
+                  "rc=%s out=%s" % (rc, out[:80]))
+
+            # 7) 端口非数字要拦掉
+            rc, out, err = run_probe(["--secret", "s", "--port", "abc"])
+            check("非数字端口被拦下", rc != 0 and "纯数字" in (out + err),
+                  "rc=%s out=%s" % (rc, out[:80]))
+
+            # 8) 两种形式的脚本都要能过 bash 语法检查
+            p = subprocess.run([BASH, "-n", pf], capture_output=True, timeout=60)
+            check("query 形式脚本语法正确", p.returncode == 0,
+                  p.stderr.decode("utf-8", "replace")[:160])
+            p2 = os.path.join(ROOT, "agent_parse_probe2.sh")
+            p = subprocess.run([BASH, "-n", p2], capture_output=True, timeout=60)
+            check("无 query 形式脚本语法正确", p.returncode == 0,
+                  p.stderr.decode("utf-8", "replace")[:160])
+            for f in (pf, p2):
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
+
+        print("\n== /agent.sh 嵌入值的净化 (query 里的危险字符) ==")
+        bad_secret = 'a"; rm -rf /; echo "'
+        bad_name = "x`id`y"
+        st, _, b = call(MASTER + "/agent.sh?" + urllib.parse.urlencode(
+            {"secret": bad_secret, "name": bad_name, "port": "20809"}))
+        t2 = b.decode("utf-8", "replace")
+        sl = [l for l in t2.splitlines() if l.startswith("SECRET=")]
+        nl = [l for l in t2.splitlines() if l.startswith("NODE_NAME=")]
+        check("query 值里的双引号被净化", sl and sl[0].count('"') == 2, sl[0] if sl else "(无 SECRET 行)")
+        check("query 值里的反引号被净化", nl and "`" not in nl[0] and nl[0].count('"') == 2,
+              nl[0] if nl else "(无 NODE_NAME 行)")
+        check("净化后不会出现裸的分号命令注入",
+              sl and 'rm -rf /' in sl[0] and sl[0].count('"') == 2,
+              "分号留在引号内即安全")
+
         print("\n== 从节点一键卸载脚本 /agent-uninstall.sh ==")
         st, h, b = call(MASTER + "/agent-uninstall.sh")
         u = b.decode("utf-8", "replace")
@@ -339,6 +458,30 @@ def main():
         check("记录接口需要登录", st == 401, st)
         st, _, b = call(MASTER + "/api/admin/health/check", "POST")
         check("探测接口需要登录", st == 401, st)
+
+        # ---- 管理面板的复制按钮 ----
+        # navigator.clipboard 只在安全上下文可用; 面板常用 http://<IP>:端口 打开,
+        # 直接调用会同步抛 TypeError 打断 onclick —— 表现是"点按钮完全没反应"。
+        print("\n== 管理面板复制按钮 (http 非安全上下文) ==")
+        with open(os.path.join(ROOT, "web", "admin.html"), encoding="utf-8") as fh:
+            adm = fh.read()
+        check("定义了带降级的 copyText()", "function copyText(" in adm)
+        check("clipboard 调用前判存在性", "navigator.clipboard && window.isSecureContext" in adm)
+        check("有 execCommand 兜底", "document.execCommand('copy')" in adm)
+        check("兜底用 textarea 且处理选区", "createElement('textarea')" in adm
+              and "setSelectionRange" in adm)
+        check("复制统一走 doCopy()", "function doCopy(" in adm)
+        # 关键: 全文只允许有一处 navigator.clipboard.writeText, 且必须在安全上下文守卫之后。
+        # 任何"散落在外的裸调"都会在 http 页面下同步抛 TypeError 打断 onclick。
+        n_call = adm.count("navigator.clipboard.writeText")
+        guard_at = adm.find("navigator.clipboard && window.isSecureContext")
+        call_at = adm.find("navigator.clipboard.writeText")
+        check("全站只有一处 clipboard 调用", n_call == 1, "出现 %d 次" % n_call)
+        check("该调用在安全上下文守卫之后", guard_at != -1 and guard_at < call_at,
+              "guard@%d call@%d" % (guard_at, call_at))
+        check("安装命令复制按钮已接入", "doCopy(m.querySelector('#cmdbox').textContent" in adm)
+        check("卸载命令复制按钮已接入", "doCopy($('#' + preId).textContent" in adm)
+        check("生成命令复制按钮已接入", "doCopy($('#gen-cmd').textContent" in adm)
 
     finally:
         for p in (agent, master):

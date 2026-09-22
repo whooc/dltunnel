@@ -97,6 +97,21 @@ scp dltunnel root@<IP>:/opt/dltunnel/dltunnel
 安装脚本由**主服务器动态生成**，二进制也从主服务器 `/bin/` 拉取 ——
 从节点不需要能访问 GitHub，也不需要能访问外网。
 
+参数有两种给法，效果一样：
+
+```bash
+# 1) 命令行参数（面板「添加从节点」生成的就是这种）
+curl -fsSL http://<主服务器>:20808/agent.sh | bash -s -- \
+     --secret "<密钥>" --name "<名称>" --port 20809
+
+# 2) 直接写在链接上
+curl -fsSL "http://<主服务器>:20808/agent.sh?secret=<密钥>&name=<名称>&port=20809" | bash
+```
+
+其它可用参数：`--server <主服务器地址>`（默认已内嵌）、`--help` 看用法。
+端口必须是纯数字，未知参数会被明确拒绝而不是静默忽略。
+节点密钥会写进 `/etc/systemd/system/dltunnel-agent.service`，该文件权限已收紧为 `600`。
+
 ### 手动运行（不走 systemd）
 
 ```bash

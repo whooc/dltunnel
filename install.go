@@ -27,12 +27,53 @@ PORT="__PORT__"
 DIR="/opt/dltunnel-agent"
 SVC="dltunnel-agent"
 
+# 命令行参数可覆盖上面的默认值。面板生成的就是这种形式:
+#   curl -fsSL <主服务器>/agent.sh | bash -s -- --secret <密钥> [--name <名称>] [--port <端口>]
+# 也可以把参数直接写在链接上(不需要 --):
+#   curl -fsSL "<主服务器>/agent.sh?secret=<密钥>&name=<名称>&port=<端口>" | bash
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --secret|--name|--port|--server)
+      if [ -z "${2:-}" ]; then
+        echo "参数 $1 后面缺少取值"; exit 1
+      fi
+      case "$1" in
+        --secret) SECRET="$2" ;;
+        --name)   NODE_NAME="$2" ;;
+        --port)   PORT="$2" ;;
+        --server) SERVER="$2" ;;
+      esac
+      shift 2 ;;
+    -h|--help)
+      echo "dltunnel 从节点安装脚本"
+      echo ""
+      echo "用法:"
+      echo "  curl -fsSL $SERVER/agent.sh | bash -s -- --secret <密钥> [--name <名称>] [--port <端口>]"
+      echo "  curl -fsSL \"$SERVER/agent.sh?secret=<密钥>&name=<名称>&port=<端口>\" | bash"
+      exit 0 ;;
+    *)
+      echo "未知参数: $1"; echo "用 --help 查看用法"; exit 1 ;;
+  esac
+done
+
+case "$PORT" in
+  ''|*[!0-9]*) echo "端口必须是纯数字: '$PORT'"; exit 1 ;;
+esac
+
 if [ "$(id -u)" != "0" ]; then
   echo "请用 root 运行 (或 sudo bash)"; exit 1
 fi
 
 if [ -z "$SECRET" ]; then
-  echo "缺少节点密钥。请到主服务器管理面板「添加从节点」重新复制命令。"; exit 1
+  echo "缺少节点密钥。"
+  echo ""
+  echo "请到主服务器管理面板「添加从节点」，直接复制那里生成的一整条命令。"
+  echo "命令长这样（--secret 的值就是面板里的通信密钥）:"
+  echo "  curl -fsSL $SERVER/agent.sh | bash -s -- --secret <密钥> --name <名称> --port 20809"
+  echo ""
+  echo "或者把参数写在链接上:"
+  echo "  curl -fsSL \"$SERVER/agent.sh?secret=<密钥>&name=<名称>&port=20809\" | bash"
+  exit 1
 fi
 
 if ! command -v curl >/dev/null 2>&1; then
@@ -80,6 +121,9 @@ StandardError=journal
 WantedBy=multi-user.target
 UNIT
 
+# unit 文件里含节点密钥(ExecStart 的 -secret), 收紧权限, 别让普通用户读到
+chmod 0600 "/etc/systemd/system/$SVC.service"
+
 systemctl daemon-reload
 systemctl enable "$SVC" >/dev/null 2>&1
 systemctl restart "$SVC"
@@ -107,13 +151,35 @@ else
 fi
 `
 
+// shSafe 把要嵌进脚本双引号字符串里的值净化一遍.
+// 这些值来自 query string, 带引号/反引号/换行会破坏生成的脚本(甚至注入命令);
+// 中文等普通字符照常保留, 只丢掉真正危险的几个。
+func shSafe(s string) string {
+	s = strings.TrimSpace(s)
+	var b strings.Builder
+	for _, r := range s {
+		switch r {
+		case '"', '\\', '$', '`', '\n', '\r', 0:
+			// 丢掉
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // handleAgentScript 动态生成从节点安装脚本.
 // 脚本内嵌主服务器地址, 从节点直接从主服务器拉二进制 —— 不依赖 GitHub, 也不依赖外网。
+//
+// 参数有两种给法, 都支持:
+//  1. query string: /agent.sh?secret=..&name=..&port=..  (值直接嵌进脚本当默认值)
+//  2. bash 参数:    /agent.sh | bash -s -- --secret .. --name .. --port ..
+//     —— 面板生成的是这种; 这时 query 里没有值, 脚本里的默认值是空的, 由参数填上。
 func (m *Master) handleAgentScript(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	secret := strings.TrimSpace(q.Get("secret"))
-	name := strings.TrimSpace(q.Get("name"))
-	port := strings.TrimSpace(q.Get("port"))
+	secret := shSafe(q.Get("secret"))
+	name := shSafe(q.Get("name"))
+	port := shSafe(q.Get("port"))
 	if port == "" {
 		port = "20809"
 	}
@@ -122,7 +188,7 @@ func (m *Master) handleAgentScript(w http.ResponseWriter, r *http.Request) {
 	}
 
 	body := agentScriptTmpl
-	body = strings.ReplaceAll(body, "__SERVER__", requestBase(r))
+	body = strings.ReplaceAll(body, "__SERVER__", shSafe(requestBase(r)))
 	body = strings.ReplaceAll(body, "__SECRET__", secret)
 	body = strings.ReplaceAll(body, "__NAME__", name)
 	body = strings.ReplaceAll(body, "__PORT__", port)

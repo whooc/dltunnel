@@ -459,6 +459,47 @@ function toast(msg, kind) {
   clearTimeout(t._h);
   t._h = setTimeout(() => { t.className = 'toast ' + (kind || ''); }, 2600);
 }
+
+/* ---------- 复制到剪贴板 ----------
+ * navigator.clipboard 只在**安全上下文**才有(https 或 localhost)。
+ * 面板常用 http://<IP>:20808 打开, 这时 navigator.clipboard 是 undefined,
+ * 直接调用会同步抛 TypeError, 把整个 onclick 处理函数打断 ——
+ * 表现就是"点了按钮完全没反应"(连 catch 里的提示都弹不出来)。
+ * 所以必须先判存在性, 再退回到 execCommand 的老办法。 */
+function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text);
+  }
+  return new Promise((resolve, reject) => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    // 必须在视口内, 否则部分浏览器 select() 不生效; 用 1px + 透明藏起来
+    ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;' +
+      'padding:0;border:none;outline:none;box-shadow:none;background:transparent;opacity:0;';
+    document.body.appendChild(ta);
+    const sel = document.getSelection();
+    const prev = sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
+    let ok = false;
+    try {
+      ta.select();
+      ta.setSelectionRange(0, ta.value.length);
+      ok = document.execCommand('copy');
+    } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    if (prev) { sel.removeAllRanges(); sel.addRange(prev); }
+    ok ? resolve() : reject(new Error('execCommand copy 失败'));
+  });
+}
+
+// 复制 + 提示; 两条路都失败时给出可手动复制的提示
+function doCopy(text, label) {
+  if (!text) { toast('没有可复制的内容', 'err'); return; }
+  copyText(text).then(
+    () => toast((label || '内容') + '已复制', 'ok'),
+    () => toast('浏览器禁止自动复制，请手动选中后按 Ctrl+C', 'err')
+  );
+}
 function fmtBytes(n) {
   n = Number(n) || 0;
   if (n < 1024) return n + ' B';
@@ -726,9 +767,7 @@ function openAdd() {
     m.querySelector('#f-secret').value = randKey(); upd();
   };
   m.querySelector('#cp').onclick = () => {
-    navigator.clipboard.writeText(m.querySelector('#cmdbox').textContent)
-      .then(() => toast('命令已复制', 'ok'))
-      .catch(() => toast('复制失败，请手动选中复制', 'err'));
+    doCopy(m.querySelector('#cmdbox').textContent, '安装命令');
   };
   m.querySelector('[data-cancel]').onclick = () => m.remove();
   m.querySelector('[data-ok]').onclick = async () => {
@@ -918,21 +957,13 @@ function buildGenCmd() {
 }
 $('#genKey').onclick = () => { $('#gen-secret').value = randKey(); buildGenCmd(); };
 $('#gen-secret').oninput = buildGenCmd;
-$('#copyCmd').onclick = () => {
-  navigator.clipboard.writeText($('#gen-cmd').textContent)
-    .then(() => toast('命令已复制', 'ok'))
-    .catch(() => toast('复制失败，请手动选中复制', 'err'));
-};
+$('#copyCmd').onclick = () => doCopy($('#gen-cmd').textContent, '安装命令');
 
 /* ---------- 一键卸载命令 ---------- */
 function bindCopy(btnId, preId, label) {
   const btn = $('#' + btnId);
   if (!btn) return;
-  btn.onclick = () => {
-    navigator.clipboard.writeText($('#' + preId).textContent)
-      .then(() => toast(label + '已复制', 'ok'))
-      .catch(() => toast('复制失败，请手动选中复制', 'err'));
-  };
+  btn.onclick = () => doCopy($('#' + preId).textContent, label);
 }
 $('#uninst-agent').textContent =
   'curl -fsSL ' + location.origin + '/agent-uninstall.sh | bash';
